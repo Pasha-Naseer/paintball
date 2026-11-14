@@ -1,0 +1,36 @@
+# Virtual environment (it lives in the project root)
+/Include/
+/Lib/
+/Scripts/
+/share/
+/etc/
+/pyvenv.cfg
+/.venv/
+/venv/
+/env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+*.log
+src/media/
+src/staticfiles/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
