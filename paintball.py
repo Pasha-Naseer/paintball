@@ -228,7 +228,7 @@ class Level:
 class ArenaGame:
     def __init__(self, root):
         self.root = root
-        self.root.title("ARENA OPS  |  Python OOP Game")
+        self.root.title("Paintball  |  Python OOP Game")
         self.root.resizable(False, False)
         self.canvas = tk.Canvas(
             root, width=WIDTH, height=HEIGHT, bg=BG,
@@ -623,7 +623,7 @@ class ArenaGame:
 
         if self.state == "menu":
             self.draw_overlay()
-            c.create_text(WIDTH / 2, 190, text="ARENA OPS", fill=WHITE,
+            c.create_text(WIDTH / 2, 190, text="paintball", fill=WHITE,
                           font=("Segoe UI", 42, "bold"))
             c.create_text(WIDTH / 2, 235, text="A PYTHON OOP SURVIVAL GAME",
                           fill=CYAN, font=("Segoe UI", 11, "bold"))
