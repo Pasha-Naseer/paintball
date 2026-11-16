@@ -205,3 +205,9 @@ If you would like to improve this project:
 6. Open a Pull Request describing your improvements.
 
 Please keep your changes clear, focused, and consistent with the existing code style.
+
+## 📌 Project Status
+
+This project is under active development.
+
+New features and improvements are welcome.
