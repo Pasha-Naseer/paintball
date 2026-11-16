@@ -190,3 +190,18 @@ Your mission ends when your health reaches zero.
 **Built with Python 🐍**
 
 *paintball — SURVIVE THE WAVES. KEEP MOVING.*
+
+## 🤝 Contributing
+
+Contributions are welcome!
+
+If you would like to improve this project:
+
+1. Fork the repository.
+2. Create a new branch for your changes.
+3. Make your changes and test them.
+4. Commit your changes with a clear message.
+5. Push your branch to your fork.
+6. Open a Pull Request describing your improvements.
+
+Please keep your changes clear, focused, and consistent with the existing code style.
