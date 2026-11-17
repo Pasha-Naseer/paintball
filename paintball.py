@@ -669,6 +669,8 @@ class ArenaGame:
             c.create_line(x, y - 13, x, y - 4, fill=CYAN)
             c.create_line(x, y + 4, x, y + 13, fill=CYAN)
 
+        
+
     def draw_overlay(self):
         self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT,
                                      fill="#070b16", stipple="gray50", outline="")
