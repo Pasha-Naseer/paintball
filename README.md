@@ -63,6 +63,20 @@ The game currently features two weapons with different damage, magazine capacity
 
 </details>
 
+### 2. RGP
+
+<details>
+<summary>Weapon specifications</summary>
+
+- Damage: group damage
+- Magazine: 1 rounds
+- Fire delay: 0.58 seconds
+- Reload time: 1.45 seconds
+- Bullet speed: 520
+- Fires 1 pellets per shot with a spread pattern.
+
+</details>
+
 ## 👾 Enemy System
 
 Enemies spawn from the four edges of the arena and continuously pursue the player.
