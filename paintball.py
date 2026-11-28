@@ -19,11 +19,28 @@ GOLD = "#ffd166"
 WHITE = "#edf4ff"
 MUTED = "#8492ad"
 GREEN = "#8be28b"
+YELLOW = "#FED049"
 
 # Leaderboard settings
 RECORDS_FILE = "paintball-records.json"
 MAX_PLAYER_NAME_LENGTH = 12
 MAX_LEADERBOARD_ENTRIES = 10
+CHECKPOINT_FILE = "paintball-checkpoint.json"
+MAX_MINES = 3
+MINE_ARM_TIME = 0.9
+MINE_TRIGGER_RADIUS = 72
+MINE_BLAST_RADIUS = 145
+MINE_DAMAGE = 125
+MINE_UNLOCK_WAVE = 40
+
+# Absolute Power settings (activates once wave 100 has been cleared)
+ABSOLUTE_POWER_WAVE = 101
+POWER_MAX_HEALTH = 250
+POWER_REGEN = 6              # health per second
+POWER_DAMAGE_MULT = 2.5      # player bullet / mine damage multiplier
+POWER_DAMAGE_TAKEN = 0.5     # incoming damage multiplier
+POWER_SPEED_MULT = 1.3
+POWER_MAX_MINES = 10
 
 
 def clamp(value, low, high):
@@ -218,6 +235,51 @@ def save_player_score(player_name, score):
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint persistence
+# ---------------------------------------------------------------------------
+
+def save_checkpoint(data):
+    temp_path = CHECKPOINT_FILE + ".tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=4, ensure_ascii=False)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_path, CHECKPOINT_FILE)
+        return True
+    except (OSError, TypeError, ValueError) as error:
+        print(f"Checkpoint save failed: {error}")
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+        return False
+
+
+def load_checkpoint():
+    try:
+        with open(CHECKPOINT_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        if not isinstance(data, dict):
+            return None
+        wave = data.get("wave")
+        if not isinstance(wave, int) or isinstance(wave, bool) or wave < 1:
+            return None
+        return data
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def delete_checkpoint():
+    try:
+        if os.path.exists(CHECKPOINT_FILE):
+            os.remove(CHECKPOINT_FILE)
+    except OSError as error:
+        print(f"Could not delete checkpoint: {error}")
+
+
+# ---------------------------------------------------------------------------
 # Weapons
 # ---------------------------------------------------------------------------
 
@@ -289,7 +351,7 @@ class AutomaticGun(Weapon):
         super().__init__(
             name="PULSE RIFLE",
             damage=25,
-            magazine_size=24,
+            magazine_size=34,
             fire_delay=0.14,
             reload_time=1.15,
             bullet_speed=650,
@@ -364,6 +426,149 @@ class RPG(Weapon):
         return rockets
 
 
+class AK_47(Weapon):
+    def __init__(self):
+        super().__init__(
+            name="AK-47 (Kalashnikov)",
+            damage=29,
+            magazine_size=30,
+            fire_delay=0.09,
+            reload_time=1.0,
+            bullet_speed=690,
+            bullet_color=YELLOW
+        )
+
+
+class SMG(Weapon):
+    """Very fast submachine gun with a large magazine."""
+
+    def __init__(self):
+        super().__init__(
+            name="VIPER SMG",
+            damage=15,
+            magazine_size=45,
+            fire_delay=0.055,
+            reload_time=1.25,
+            bullet_speed=730,
+            bullet_color="#72f1b8"
+        )
+
+
+class SniperRifle(Weapon):
+    """Slow, accurate rifle that deals heavy single-shot damage."""
+
+    def __init__(self):
+        super().__init__(
+            name="LONGSHOT SNIPER",
+            damage=125,
+            magazine_size=5,
+            fire_delay=0.85,
+            reload_time=2.0,
+            bullet_speed=1120,
+            bullet_color="#b9a0ff"
+        )
+
+    def attack(self, x, y, target_x, target_y):
+        shots = super().attack(x, y, target_x, target_y)
+        if shots:
+            shots[0]["radius"] = 5
+        return shots
+
+
+class Minigun(Weapon):
+    """Extremely high fire rate, balanced by modest damage and slow reload."""
+
+    def __init__(self):
+        super().__init__(
+            name="TITAN MINIGUN",
+            damage=12,
+            magazine_size=100,
+            fire_delay=0.035,
+            reload_time=3.4,
+            bullet_speed=760,
+            bullet_color="#ffcf70"
+        )
+
+
+class BurstRifle(Weapon):
+    """Fires a three-projectile burst with a small spread."""
+
+    def __init__(self):
+        super().__init__(
+            name="TRIDENT BURST RIFLE",
+            damage=13,
+            magazine_size=27,
+            fire_delay=0.32,
+            reload_time=1.65,
+            bullet_speed=790,
+            bullet_color="#70c7ff"
+        )
+
+    def attack(self, x, y, target_x, target_y):
+        shots = super().attack(x, y, target_x, target_y)
+        if not shots:
+            return shots
+
+        base = shots[0]
+        angle = math.atan2(target_y - y, target_x - x)
+        burst = []
+        for offset in (-0.075, 0, 0.075):
+            shot_angle = angle + offset
+            burst.append({
+                "x": x + math.cos(shot_angle) * 22,
+                "y": y + math.sin(shot_angle) * 22,
+                "vx": math.cos(shot_angle) * self.bullet_speed,
+                "vy": math.sin(shot_angle) * self.bullet_speed,
+                "damage": self.damage,
+                "color": self.bullet_color,
+                "radius": 3,
+            })
+        return burst
+
+
+class Flamethrower(Weapon):
+    """Short-range-feeling stream of slow, large flame projectiles."""
+
+    def __init__(self):
+        super().__init__(
+            name="INFERNO FLAMETHROWER",
+            damage=9,
+            magazine_size=90,
+            fire_delay=0.045,
+            reload_time=2.5,
+            bullet_speed=390,
+            bullet_color="#ff7138"
+        )
+
+    def attack(self, x, y, target_x, target_y):
+        shots = super().attack(x, y, target_x, target_y)
+        if shots:
+            shots[0]["radius"] = 7
+            shots[0]["damage"] = 11
+        return shots
+
+
+class Railgun(Weapon):
+    """Very powerful energy shot with a tiny magazine."""
+
+    def __init__(self):
+        super().__init__(
+            name="APEX RAILGUN",
+            damage=190,
+            magazine_size=3,
+            fire_delay=1.25,
+            reload_time=2.6,
+            bullet_speed=1450,
+            bullet_color="#ff5de4"
+        )
+
+    def attack(self, x, y, target_x, target_y):
+        shots = super().attack(x, y, target_x, target_y)
+        if shots:
+            shots[0]["radius"] = 6
+        return shots
+
+
 # ---------------------------------------------------------------------------
 # Characters
 # ---------------------------------------------------------------------------
@@ -387,12 +592,41 @@ class Character:
 class Player(Character):
     def __init__(self):
         super().__init__(WIDTH / 2, HEIGHT / 2, 100)
-        self.speed = 245
+        self.base_speed = 245
+        self.speed = self.base_speed
+        self.absolute_power = False
         self.weapon = AutomaticGun()
-        self.weapons = [self.weapon, Shotgun(), RPG()]
+        self.weapons = [
+            self.weapon,
+            Shotgun(),
+            RPG(),
+            AK_47(),
+            SMG(),
+            SniperRifle(),
+            Minigun(),
+            BurstRifle(),
+            Flamethrower(),
+            Railgun(),
+        ]
         self.weapon_index = 0
+        self.unlocked_weapon_count = 1
         self.score = 0
         self.kills = 0
+
+    def take_damage(self, amount):
+        # Absolute Power halves all incoming damage.
+        if self.absolute_power:
+            amount *= POWER_DAMAGE_TAKEN
+        super().take_damage(amount)
+
+    def unlock_weapons_for_wave(self, wave):
+        """Unlock one additional weapon every ten waves."""
+        new_count = min(len(self.weapons), 1 + max(0, wave // 10))
+        if new_count <= self.unlocked_weapon_count:
+            return None
+
+        self.unlocked_weapon_count = new_count
+        return self.weapons[new_count - 1].name
 
     def move(self, dx, dy, dt):
         length = math.hypot(dx, dy)
@@ -406,7 +640,7 @@ class Player(Character):
         self.y = clamp(self.y, 76, HEIGHT - 24)
 
     def switch_weapon(self):
-        self.weapon_index = (self.weapon_index + 1) % len(self.weapons)
+        self.weapon_index = (self.weapon_index + 1) % self.unlocked_weapon_count
         self.weapon = self.weapons[self.weapon_index]
 
 
@@ -419,11 +653,420 @@ class Enemy(Character):
         self.damage = 13
         self.attack_cooldown = 0
         self._kill_awarded = False
+        self.is_checkpoint = False
 
     def chase(self, player, dt):
         angle = math.atan2(player.y - self.y, player.x - self.x)
         self.x += math.cos(angle) * self.speed * dt
         self.y += math.sin(angle) * self.speed * dt
+
+
+BOSS_TYPES = [
+    {   # 1
+        "name": "WARDEN", "color": GOLD, "fill": "#56351d",
+        "radius": 0, "hp": 1.0, "spd": 1.0, "bspd": 1.0, "ivl": 1.0,
+        "dash_from": 2, "dash_every": 5.0,
+        "summon_from": 2, "summon_time": 9.0,
+        "patterns": {
+            1: ["single", "fan"],
+            2: ["fan", "ring", "burst"],
+            3: ["ring", "fan", "burst", "ring"],
+        },
+    },
+    {   # 2
+        "name": "STRIKER", "color": "#ff6b6b", "fill": "#4a1c1c",
+        "radius": -4, "hp": 0.85, "spd": 1.35, "bspd": 1.1, "ivl": 0.85,
+        "dash_from": 1, "dash_every": 3.2,
+        "patterns": {
+            1: ["burst", "single"],
+            2: ["burst", "fan", "burst"],
+            3: ["burst", "fan", "burst", "ring"],
+        },
+    },
+    {   # 3
+        "name": "VORTEX", "color": "#b388ff", "fill": "#2f2250",
+        "radius": 0, "hp": 1.0, "spd": 1.0, "bspd": 0.9, "ivl": 0.55,
+        "orbit": True,
+        "patterns": {
+            1: ["spiral"],
+            2: ["spiral", "fan"],
+            3: ["spiral", "ring", "spiral"],
+        },
+    },
+    {   # 4
+        "name": "HIVE QUEEN", "color": GREEN, "fill": "#1f3a24",
+        "radius": 2, "hp": 1.15, "spd": 0.95, "bspd": 1.0, "ivl": 1.1,
+        "summon_from": 1, "summon_time": 6.5, "summon_cap": 10, "summon_bonus": 1,
+        "patterns": {
+            1: ["single", "shotgun"],
+            2: ["shotgun", "fan", "ring"],
+            3: ["shotgun", "ring", "fan", "shotgun"],
+        },
+    },
+    {   # 5
+        "name": "PHANTOM", "color": CYAN, "fill": "#143a3c",
+        "radius": -2, "hp": 0.95, "spd": 1.15, "bspd": 1.2, "ivl": 0.9,
+        "blink_from": 1, "blink_every": 3.2,
+        "patterns": {
+            1: ["snipe", "fan"],
+            2: ["snipe", "burst", "fan"],
+            3: ["snipe", "snipe", "ring", "burst"],
+        },
+    },
+    {   # 6
+        "name": "TEMPEST", "color": BLUE, "fill": "#1a2650",
+        "radius": 0, "hp": 1.1, "spd": 1.0, "bspd": 1.0, "ivl": 0.8,
+        "dash_from": 3, "dash_every": 4.5,
+        "patterns": {
+            1: ["cross", "single"],
+            2: ["cross", "ring", "spiral"],
+            3: ["cross", "ring", "spiral", "cross"],
+        },
+    },
+    {   # 7
+        "name": "JUGGERNAUT", "color": "#ff8c42", "fill": "#4a2a12",
+        "radius": 10, "hp": 1.6, "spd": 0.9, "bspd": 1.0, "ivl": 1.0,
+        "dash_from": 1, "dash_every": 4.0, "dash_ring": True,
+        "patterns": {
+            1: ["shotgun", "wall"],
+            2: ["shotgun", "wall", "ring"],
+            3: ["wall", "shotgun", "ring", "wall"],
+        },
+    },
+    {   # 8
+        "name": "ECLIPSE", "color": "#c0c8ff", "fill": "#262a4a",
+        "radius": 0, "hp": 1.0, "spd": 1.25, "bspd": 1.15, "ivl": 0.8,
+        "dash_from": 2, "dash_every": 4.0, "blink_from": 2, "blink_every": 3.6,
+        "patterns": {
+            1: ["burst", "snipe"],
+            2: ["burst", "cross", "snipe"],
+            3: ["cross", "snipe", "burst", "ring"],
+        },
+    },
+    {   # 9
+        "name": "NOVA", "color": "#ff5de4", "fill": "#4a1844",
+        "radius": 2, "hp": 1.2, "spd": 1.1, "bspd": 1.0, "ivl": 0.75,
+        "orbit": True,
+        "patterns": {
+            1: ["wall", "cross"],
+            2: ["wall", "cross", "ring"],
+            3: ["wall", "cross", "ring", "spiral"],
+        },
+    },
+    {   # 10
+        "name": "OVERLORD", "color": "#ff3b30", "fill": "#3a0d0d",
+        "radius": 6, "hp": 1.5, "spd": 1.15, "bspd": 1.1, "ivl": 0.8,
+        "dash_from": 1, "dash_every": 3.5, "blink_from": 2, "blink_every": 3.4,
+        "summon_from": 1, "summon_time": 7.5,
+        "patterns": {
+            1: ["fan", "burst", "wall"],
+            2: ["ring", "wall", "burst", "cross", "snipe"],
+            3: ["cross", "ring", "wall", "burst", "spiral", "snipe"],
+        },
+    },
+]
+
+
+class BossEnemy(Enemy):
+    """
+    A massive multi-phase boss. Every ten waves brings a different boss
+    (BOSS_TYPES cycles after wave 100, and keeps getting stronger).
+
+    Phase 1 (>66% health), Phase 2 (>33%) and Phase 3 (<=33%) unlock
+    progressively nastier attack patterns and faster attack rates.
+    """
+
+    def __init__(self, x, y, wave):
+        super().__init__(x, y, wave)
+
+        tier = max(1, wave // 10)
+        cfg = BOSS_TYPES[(tier - 1) % len(BOSS_TYPES)]
+        self.cfg = cfg
+        self.tier = tier
+        self.wave = wave
+        self.cycle = (tier - 1) // len(BOSS_TYPES)
+
+        self.boss_name = cfg["name"] + (f" MK{self.cycle + 1}" if self.cycle else "")
+        self.color = cfg["color"]
+        self.body_fill = cfg["fill"]
+
+        self.max_health = int((2000 + wave * 130 + tier * tier * 45) * cfg["hp"] * 0.88)
+        self.health = self.max_health
+        self.radius = 34 + min(tier // 2, 8) + cfg["radius"]
+        self.base_speed = (105 + min(wave * 0.7, 70)) * cfg["spd"]
+        self.speed = self.base_speed
+        self.damage = min(60, 25 + int(tier * 2))
+        self.attack_cooldown = 0
+        self.is_checkpoint = True
+        self.is_boss = True
+
+        # Projectile stats.
+        self.bullet_damage = int(min(36, 12 + tier * 1.6))
+        self.bullet_speed = (255 + min(135, wave * 1.3)) * cfg["bspd"]
+
+        # Behaviour state.
+        self.phase = 1
+        self.shot_timer = 0.9
+        self.pattern_step = 0
+        self.ring_offset = 0.0
+        self.spin = random.random() * math.tau
+        self.summon_timer = min(6.0, cfg.get("summon_time", 9.0))
+        self.dash_timer = min(3.5, cfg.get("dash_every", 5.0))
+        self.dash_time_left = 0.0
+        self.dash_angle = 0.0
+        self.blink_timer = cfg.get("blink_every", 3.2)
+        self.orbit_dir = random.choice((-1, 1))
+        self.orbit_flip = random.uniform(2.5, 5.0)
+        self.blink_flash = False
+        self.pending_message = None
+
+    # -- projectile helpers -------------------------------------------------
+
+    def _fire(self, bullets, angle, speed_mult=1.0, radius=7,
+              ox=0.0, oy=0.0, dmg_mult=1.0):
+        speed = self.bullet_speed * speed_mult
+        bullets.append({
+            "x": self.x + ox,
+            "y": self.y + oy,
+            "vx": math.cos(angle) * speed,
+            "vy": math.sin(angle) * speed,
+            "radius": radius,
+            "damage": max(1, int(self.bullet_damage * dmg_mult)),
+            "life": 4.0,
+            "color": self.color,
+        })
+
+    def _fire_fan(self, bullets, angle, count, spread=0.2):
+        start = -spread * (count - 1) / 2
+        for i in range(count):
+            self._fire(bullets, angle + start + i * spread)
+
+    def _fire_ring(self, bullets, count):
+        for i in range(count):
+            angle = self.ring_offset + math.tau * i / count
+            self._fire(bullets, angle, speed_mult=0.75, radius=6)
+        self.ring_offset += 0.21
+
+    def _ring_count(self):
+        return 10 + 4 * (self.phase - 1) + min(self.tier, 10) + self.cycle * 2
+
+    # -- attack patterns ----------------------------------------------------
+
+    def _pattern(self, name, player, bullets):
+        angle = math.atan2(player.y - self.y, player.x - self.x)
+        extra = self.cycle * 2
+        fan_n = 3 + min(self.tier // 3, 5) + 2 * (self.phase - 1) + extra
+
+        if name == "single":
+            self._fire(bullets, angle, 1.15)
+
+        elif name == "fan":
+            self._fire_fan(bullets, angle, fan_n)
+
+        elif name == "ring":
+            self._fire_ring(bullets, self._ring_count())
+
+        elif name == "burst":
+            mults = (1.0, 1.18, 1.36) + ((1.54, 1.72) if self.phase == 3 else ())
+            for m in mults:
+                self._fire(bullets, angle, m)
+
+        elif name == "spiral":
+            arms = 3 + self.phase + self.cycle
+            for i in range(arms):
+                self._fire(bullets, self.spin + math.tau * i / arms,
+                           speed_mult=0.85, radius=6)
+            self.spin += 0.33
+
+        elif name == "cross":
+            axes = 4 if self.phase < 3 else 8
+            for i in range(axes):
+                a = self.spin + math.tau * i / axes
+                self._fire(bullets, a, 0.8)
+                self._fire(bullets, a, 1.1)
+            self.spin += 0.4
+
+        elif name == "wall":
+            perp = angle + math.pi / 2
+            count = 11 + extra
+            gap = random.randint(1, count - 4)
+            for k in range(count):
+                if gap <= k < gap + 3:
+                    continue
+                off = (k - (count - 1) / 2) * 30
+                self._fire(bullets, angle, 0.7, 6,
+                           ox=math.cos(perp) * off, oy=math.sin(perp) * off)
+
+        elif name == "snipe":
+            self._fire(bullets, angle, 2.0, 6, dmg_mult=1.6)
+
+        elif name == "shotgun":
+            for _ in range(7 + self.phase * 2 + extra):
+                a = angle + random.uniform(-0.38, 0.38)
+                self._fire(bullets, a, random.uniform(0.75, 1.1), 5, dmg_mult=0.65)
+
+    # -- special abilities --------------------------------------------------
+
+    def _summon(self, enemies):
+        cfg = self.cfg
+        alive_minions = sum(
+            1 for e in enemies
+            if getattr(e, "is_minion", False) and e.alive
+        )
+        room = cfg.get("summon_cap", 8) - alive_minions
+        count = min(room, 2 + min(self.tier // 5, 2) + cfg.get("summon_bonus", 0))
+        if count <= 0:
+            return False
+
+        for _ in range(count):
+            angle = random.random() * math.tau
+            mx = clamp(self.x + math.cos(angle) * (self.radius + 30), 25, WIDTH - 25)
+            my = clamp(self.y + math.sin(angle) * (self.radius + 30), 95, HEIGHT - 25)
+            minion = Enemy(mx, my, self.wave)
+            minion.health = minion.max_health = max(
+                40, int(minion.max_health * 0.45)
+            )
+            minion.is_minion = True
+            minion._kill_awarded = True  # minions give no score or drops
+            enemies.append(minion)
+        return True
+
+    def _blink(self, player):
+        lo_x, hi_x = self.radius + 5, WIDTH - self.radius - 5
+        lo_y, hi_y = 85 + self.radius, HEIGHT - self.radius - 5
+        for _ in range(10):
+            angle = random.random() * math.tau
+            r = random.uniform(200, 320)
+            nx = player.x + math.cos(angle) * r
+            ny = player.y + math.sin(angle) * r
+            if lo_x <= nx <= hi_x and lo_y <= ny <= hi_y:
+                break
+        else:
+            nx = clamp(nx, lo_x, hi_x)
+            ny = clamp(ny, lo_y, hi_y)
+        self.blink_flash = True
+        self.x, self.y = nx, ny
+        self.blink_flash = True
+        self.shot_timer = min(self.shot_timer, 0.2)
+
+    # -- main AI ------------------------------------------------------------
+
+    def update_ai(self, player, dt, enemy_bullets, enemies=None):
+        cfg = self.cfg
+
+        ratio = self.health / self.max_health
+        new_phase = 1 if ratio > 0.66 else (2 if ratio > 0.33 else 3)
+        if new_phase != self.phase:
+            self.phase = new_phase
+            self.pending_message = f"{self.boss_name} ENRAGED - PHASE {new_phase}!"
+            self.shot_timer = min(self.shot_timer, 0.4)
+
+        dx = player.x - self.x
+        dy = player.y - self.y
+        dist = max(1, math.hypot(dx, dy))
+
+        speed = self.base_speed * (1 + 0.2 * (self.phase - 1))
+        self.speed = speed
+
+        # Movement.
+        if self.dash_time_left > 0:
+            self.dash_time_left -= dt
+            dash_speed = self.base_speed * 3.2
+            self.x += math.cos(self.dash_angle) * dash_speed * dt
+            self.y += math.sin(self.dash_angle) * dash_speed * dt
+            if self.dash_time_left <= 0 and cfg.get("dash_ring"):
+                self._fire_ring(enemy_bullets, self._ring_count())
+                self.pending_message = f"{self.boss_name} SHOCKWAVE!"
+
+        elif cfg.get("orbit"):
+            self.orbit_flip -= dt
+            if self.orbit_flip <= 0:
+                self.orbit_dir *= -1
+                self.orbit_flip = random.uniform(2.5, 5.0)
+            tx = -dy / dist * self.orbit_dir
+            ty = dx / dist * self.orbit_dir
+            radial = clamp((dist - 230) / 60, -1, 1)
+            mx = tx + dx / dist * radial * 0.9
+            my = ty + dy / dist * radial * 0.9
+            length = max(1, math.hypot(mx, my))
+            self.x += mx / length * speed * dt
+            self.y += my / length * speed * dt
+
+        else:
+            if dist > 175:
+                self.x += dx / dist * speed * dt
+                self.y += dy / dist * speed * dt
+            elif dist < 115:
+                self.x -= dx / dist * speed * 0.65 * dt
+                self.y -= dy / dist * speed * 0.65 * dt
+
+        # Dash trigger.
+        dash_from = cfg.get("dash_from")
+        if dash_from and self.phase >= dash_from and self.dash_time_left <= 0:
+            self.dash_timer -= dt
+            if self.dash_timer <= 0 and dist > 140:
+                self.dash_time_left = 0.55
+                self.dash_angle = math.atan2(dy, dx)
+                self.dash_timer = max(
+                    1.6,
+                    cfg.get("dash_every", 5.0) - 0.5 * self.phase - self.tier * 0.05
+                )
+
+        # Teleport.
+        blink_from = cfg.get("blink_from")
+        if blink_from and self.phase >= blink_from:
+            self.blink_timer -= dt
+            if self.blink_timer <= 0:
+                self._blink(player)
+                self.blink_timer = max(
+                    1.4, cfg.get("blink_every", 3.2) - 0.4 * self.phase
+                )
+
+        # Keep the boss inside the arena (orbiters reverse direction at walls).
+        ux, uy = self.x, self.y
+        self.x = clamp(self.x, self.radius + 5, WIDTH - self.radius - 5)
+        self.y = clamp(self.y, 85 + self.radius, HEIGHT - self.radius - 5)
+        if cfg.get("orbit") and (abs(ux - self.x) > 0.5 or abs(uy - self.y) > 0.5):
+            self.orbit_dir *= -1
+
+        # Shooting.
+        self.shot_timer -= dt
+        if self.shot_timer <= 0:
+            patterns = cfg["patterns"][self.phase]
+            name = patterns[self.pattern_step % len(patterns)]
+            self.pattern_step += 1
+            self._pattern(name, player, enemy_bullets)
+            base_interval = max(0.42, 1.15 - self.tier * 0.04) * cfg["ivl"]
+            self.shot_timer = max(
+                0.25, base_interval / (1 + 0.3 * (self.phase - 1))
+            )
+
+        # Reinforcements.
+        summon_from = cfg.get("summon_from")
+        if summon_from and self.phase >= summon_from and enemies is not None:
+            self.summon_timer -= dt
+            if self.summon_timer <= 0:
+                if self._summon(enemies):
+                    self.pending_message = f"{self.boss_name} SUMMONS REINFORCEMENTS!"
+                self.summon_timer = max(
+                    3.5, cfg.get("summon_time", 9.0) - 1.5 * (self.phase - 1)
+                )
+
+# ---------------------------------------------------------------------------
+# Mines
+# ---------------------------------------------------------------------------
+
+class Mine:
+    """A proximity mine placed by the player."""
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.placed_at = time.time()
+        self.exploded = False
+
+    @property
+    def armed(self):
+        return time.time() - self.placed_at >= MINE_ARM_TIME
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +1080,7 @@ class Equipment:
         self.x = x
         self.y = y
         self.active = True
+        self.ttl = None  # seconds until the pickup disappears (None = never)
 
     def pick_up(self, player):
         raise NotImplementedError
@@ -469,12 +1113,14 @@ class AmmoCrate(Equipment):
 # ---------------------------------------------------------------------------
 
 class Level:
-    def __init__(self):
-        self.wave = 1
+    def __init__(self, wave=1, checkpoint_done=False):
+        self.wave = wave
         self.spawned = 0
-        self.total_to_spawn = 5
+        # Every tenth wave is a dedicated boss fight with no regular enemies.
+        self.total_to_spawn = 1 if wave % 10 == 0 else (5 if wave == 1 else 5 + wave * 2)
         self.spawn_timer = 0
-        self.banner_until = time.time() + 2.2
+        self.banner_until = time.time() + 2.8
+        self.checkpoint_spawn_number = 1 if wave % 10 == 0 else None
 
     @property
     def complete(self):
@@ -483,9 +1129,10 @@ class Level:
     def begin_next_wave(self):
         self.wave += 1
         self.spawned = 0
-        self.total_to_spawn = 5 + self.wave * 2
+        self.total_to_spawn = 1 if self.wave % 10 == 0 else 5 + self.wave * 2
         self.spawn_timer = 0
-        self.banner_until = time.time() + 2.0
+        self.banner_until = time.time() + (3.0 if self.wave % 10 == 0 else 2.0)
+        self.checkpoint_spawn_number = 1 if self.wave % 10 == 0 else None
 
 
 # ---------------------------------------------------------------------------
@@ -528,11 +1175,13 @@ class ArenaGame:
         self.enemy_bullets = []
         self.pickups = []
         self.particles = []
+        self.mines = []
 
         self.last_time = time.perf_counter()
         self.message = ""
         self.message_until = 0
         self.shake = 0
+        self.boss_pickup_timer = 4.0
 
         self.canvas.bind("<Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonPress-1>", self.on_mouse_down)
@@ -608,6 +1257,24 @@ class ArenaGame:
         else:
             print("Your score could not be saved.")
 
+    def save_checkpoint(self):
+        player = self.player
+        data = {
+            "wave": self.level.wave,
+            "player_name": self.player_name,
+            "health": player.health,
+            "score": player.score,
+            "kills": player.kills,
+            "weapon_index": player.weapon_index,
+            "ammo": [weapon.ammo for weapon in player.weapons],
+        }
+        if save_checkpoint(data):
+            self.level.checkpoint_spawn_number = None
+            self.set_message("CHECKPOINT SAVED!")
+            return True
+        self.set_message("CHECKPOINT SAVE FAILED!")
+        return False
+
     def close_game(self):
         """Save an unfinished run before closing the application."""
 
@@ -617,6 +1284,34 @@ class ArenaGame:
         self.root.destroy()
 
     # -----------------------------------------------------------------------
+    # Absolute Power
+    # -----------------------------------------------------------------------
+
+    def activate_absolute_power(self, silent=False):
+        """Grant the player every upgrade once wave 100 has been conquered."""
+
+        player = self.player
+        if player.absolute_power:
+            return
+
+        player.absolute_power = True
+        player.max_health = POWER_MAX_HEALTH
+        player.health = player.max_health
+        player.speed = player.base_speed * POWER_SPEED_MULT
+        player.unlocked_weapon_count = len(player.weapons)
+
+        for weapon in player.weapons:
+            weapon.ammo = weapon.magazine_size
+            weapon.reloading_until = 0
+
+        if not silent:
+            self.set_message("ABSOLUTE POWER ACTIVATED!")
+            self.message_until = time.time() + 3.5
+            self.shake = max(self.shake, 0.4)
+            self.add_burst(player.x, player.y, GOLD, 40)
+            self.add_burst(player.x, player.y, CYAN, 40)
+
+    # -----------------------------------------------------------------------
     # Game controls
     # -----------------------------------------------------------------------
 
@@ -624,15 +1319,51 @@ class ArenaGame:
         if self.state not in ("menu", "gameover"):
             return
 
-        player_name = self.enter_player_name()
+        checkpoint = load_checkpoint()
+        continue_game = False
+        if checkpoint:
+            continue_game = messagebox.askyesno(
+                "Checkpoint Found",
+                f"Checkpoint found at Wave {checkpoint['wave']}.\n\nDo you want to continue?",
+                parent=self.root
+            )
 
-        if player_name is None:
-            return
-
-        self.player_name = player_name
+        if continue_game:
+            self.player_name = checkpoint.get("player_name", "Player")
+        else:
+            player_name = self.enter_player_name()
+            if player_name is None:
+                return
+            self.player_name = player_name
+            delete_checkpoint()
 
         self.player = Player()
-        self.level = Level()
+        if continue_game and checkpoint["wave"] >= ABSOLUTE_POWER_WAVE:
+            self.activate_absolute_power(silent=True)
+        if continue_game:
+            health = checkpoint.get("health", 100)
+            if not isinstance(health, (int, float)) or isinstance(health, bool):
+                health = 100
+            self.player.health = clamp(health, 1, self.player.max_health)
+            for field in ("score", "kills"):
+                value = checkpoint.get(field, 0)
+                setattr(self.player, field, value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0)
+            self.player.unlock_weapons_for_wave(checkpoint["wave"])
+            weapon_index = checkpoint.get("weapon_index", 0)
+            if not isinstance(weapon_index, int) or isinstance(weapon_index, bool):
+                weapon_index = 0
+            self.player.weapon_index = clamp(
+                weapon_index, 0, self.player.unlocked_weapon_count - 1
+            )
+            self.player.weapon = self.player.weapons[self.player.weapon_index]
+            ammo_data = checkpoint.get("ammo", [])
+            if isinstance(ammo_data, list):
+                for weapon, ammo in zip(self.player.weapons, ammo_data):
+                    if isinstance(ammo, int) and not isinstance(ammo, bool):
+                        weapon.ammo = clamp(ammo, 0, weapon.magazine_size)
+            self.level = Level(wave=checkpoint["wave"], checkpoint_done=True)
+        else:
+            self.level = Level()
 
         self.enemies.clear()
         self.bullets.clear()
@@ -640,7 +1371,8 @@ class ArenaGame:
         self.enemy_bullets.clear()
         self.pickups.clear()
         self.particles.clear()
-
+        self.mines.clear()
+        self.boss_pickup_timer = 4.0
         self.score_saved = False
         self.state = "playing"
         self.last_time = time.perf_counter()
@@ -656,6 +1388,9 @@ class ArenaGame:
         elif key == "q" and self.state == "playing":
             self.player.switch_weapon()
             self.set_message(self.player.weapon.name)
+
+        elif key == "e" and self.state == "playing":
+            self.place_mine()
 
         elif key == "p":
             self.toggle_pause()
@@ -691,6 +1426,18 @@ class ArenaGame:
         self.message = message
         self.message_until = time.time() + 1.25
 
+    def place_mine(self):
+        if self.level.wave < MINE_UNLOCK_WAVE:
+            self.set_message(f"MINES UNLOCK AT WAVE {MINE_UNLOCK_WAVE}")
+            return
+
+        max_mines = POWER_MAX_MINES if self.player.absolute_power else MAX_MINES
+        if len(self.mines) >= max_mines:
+            self.set_message(f"MAX {max_mines} MINES ACTIVE")
+            return
+        self.mines.append(Mine(self.player.x, self.player.y))
+        self.set_message("MINE DEPLOYED - E TO PLACE")
+
     def shoot(self):
         player = self.player
 
@@ -702,6 +1449,15 @@ class ArenaGame:
         )
 
         if shots:
+            if player.absolute_power:
+                # Boosted damage, bigger blasts, infinite ammo, faster fire rate.
+                for shot in shots:
+                    shot["damage"] = int(shot["damage"] * POWER_DAMAGE_MULT)
+                    if "splash_radius" in shot:
+                        shot["splash_radius"] *= 1.4
+                player.weapon.ammo = player.weapon.magazine_size
+                player.weapon.reloading_until = 0
+                player.weapon.last_shot -= player.weapon.fire_delay * 0.4
             self.bullets.extend(shots)
 
         elif player.weapon.ammo == 0 and not player.weapon.is_reloading:
@@ -723,8 +1479,36 @@ class ArenaGame:
         else:
             x, y = WIDTH - 25, random.randint(90, HEIGHT - 25)
 
-        self.enemies.append(Enemy(x, y, self.level.wave))
         self.level.spawned += 1
+        if self.level.wave % 10 == 0:
+            enemy = BossEnemy(x, y, self.level.wave)
+            self.set_message(f"{enemy.boss_name} - BOSS WAVE {self.level.wave}!")
+        else:
+            enemy = Enemy(x, y, self.level.wave)
+            if self.level.spawned == self.level.checkpoint_spawn_number:
+                enemy.is_checkpoint = True
+        self.enemies.append(enemy)
+
+    def spawn_boss_medkit(self):
+        """Drop a temporary health pack somewhere away from the boss."""
+
+        boss = next(
+            (e for e in self.enemies if getattr(e, "is_boss", False) and e.alive),
+            None
+        )
+        x, y = WIDTH / 2, HEIGHT / 2
+
+        for _ in range(12):
+            x = random.randint(40, WIDTH - 40)
+            y = random.randint(100, HEIGHT - 40)
+            far_from_boss = boss is None or distance(x, y, boss.x, boss.y) >= 140
+            if far_from_boss and distance(x, y, self.player.x, self.player.y) >= 60:
+                break
+
+        kit = Medkit(x, y)
+        kit.ttl = 15.0
+        self.pickups.append(kit)
+        self.set_message("HEALTH PACK DROPPED!")
 
     def resolve_enemy_collisions(self):
         enemies = [enemy for enemy in self.enemies if enemy.alive]
@@ -813,6 +1597,29 @@ class ArenaGame:
 
         player.weapon.update()
 
+        # Absolute Power: health regeneration and endless ammo.
+        if player.absolute_power:
+            player.health = min(
+                player.max_health,
+                player.health + POWER_REGEN * dt
+            )
+            for weapon in player.weapons:
+                if weapon.reloading_until or weapon.ammo < weapon.magazine_size:
+                    weapon.ammo = weapon.magazine_size
+                    weapon.reloading_until = 0
+
+        # During boss fights, supply temporary health packs to keep it fair.
+        if any(getattr(e, "is_boss", False) and e.alive for e in self.enemies):
+            self.boss_pickup_timer -= dt
+            if self.boss_pickup_timer <= 0:
+                medkits = sum(1 for i in self.pickups if isinstance(i, Medkit))
+                if medkits < 3 and player.health < player.max_health:
+                    self.spawn_boss_medkit()
+                low_health = player.health < player.max_health * 0.5
+                self.boss_pickup_timer = 7.0 if low_health else 13.0
+        else:
+            self.boss_pickup_timer = 4.0
+
         # Spawn the current wave gradually.
         if self.level.spawned < self.level.total_to_spawn:
             self.level.spawn_timer -= dt
@@ -896,6 +1703,15 @@ class ArenaGame:
                             player.kills += 1
                             self.add_burst(enemy.x, enemy.y, PINK, 13)
 
+                            if getattr(enemy, "is_boss", False):
+                                self.enemy_bullets.clear()
+                                self.set_message("BOSS DEFEATED! HEALTH RESTORED")
+                                player.health = player.max_health
+                                self.add_burst(player.x, player.y, GREEN, 30)
+
+                            if enemy.is_checkpoint:
+                                self.save_checkpoint()
+
                             if random.random() < 0.16:
                                 kind = (
                                     Medkit
@@ -904,10 +1720,75 @@ class ArenaGame:
                                 )
                                 self.pickups.append(kind(enemy.x, enemy.y))
 
-        # Enemies pursue the player.
+        # Mines arm after a short delay, then detonate when an enemy approaches.
+        mine_power = POWER_DAMAGE_MULT if player.absolute_power else 1
+        for mine in self.mines[:]:
+            if not mine.armed:
+                continue
+            target = next((enemy for enemy in self.enemies if enemy.alive and distance(mine.x, mine.y, enemy.x, enemy.y) <= MINE_TRIGGER_RADIUS), None)
+            if target is None:
+                continue
+            mine.exploded = True
+            self.explosions.append({"x": mine.x, "y": mine.y, "radius": MINE_BLAST_RADIUS, "life": 0.32, "max_life": 0.32})
+            self.shake = max(self.shake, 0.22)
+            self.add_burst(mine.x, mine.y, YELLOW, 28)
+            for enemy in self.enemies:
+                if enemy.alive:
+                    dist = distance(mine.x, mine.y, enemy.x, enemy.y)
+                    if dist <= MINE_BLAST_RADIUS:
+                        falloff = 1 - (dist / MINE_BLAST_RADIUS) * 0.35
+                        enemy.take_damage(int(MINE_DAMAGE * falloff * mine_power))
+            self.mines.remove(mine)
+            self.set_message("MINE DETONATED!")
+
+        # Award kills caused by mines as well as other damage sources.
         for enemy in self.enemies:
-            if enemy.alive:
+            if not enemy.alive and not enemy._kill_awarded:
+                enemy._kill_awarded = True
+                player.score += 100
+                player.kills += 1
+                self.add_burst(enemy.x, enemy.y, PINK, 13)
+                if getattr(enemy, "is_boss", False):
+                    self.enemy_bullets.clear()
+                    self.set_message("BOSS DEFEATED! HEALTH RESTORED")
+                    player.health = player.max_health
+                    self.add_burst(player.x, player.y, GREEN, 30)
+                if enemy.is_checkpoint:
+                    self.save_checkpoint()
+                if random.random() < 0.16:
+                    kind = Medkit if player.health < 65 and random.random() < 0.6 else AmmoCrate
+                    self.pickups.append(kind(enemy.x, enemy.y))
+
+        # Regular enemies chase; bosses keep their distance and fire aimed shots.
+        for enemy in self.enemies[:]:
+            if not enemy.alive:
+                continue
+            if getattr(enemy, "is_boss", False):
+                enemy.update_ai(player, dt, self.enemy_bullets, self.enemies)
+                if enemy.pending_message:
+                    self.set_message(enemy.pending_message)
+                    enemy.pending_message = None
+                    self.shake = max(self.shake, 0.15)
+                if enemy.blink_flash:
+                    self.add_burst(enemy.x, enemy.y, enemy.color, 18)
+                    enemy.blink_flash = False
+            else:
                 enemy.chase(player, dt)
+
+        # Update boss projectiles and apply damage to the player.
+        for bullet in self.enemy_bullets[:]:
+            bullet["x"] += bullet["vx"] * dt
+            bullet["y"] += bullet["vy"] * dt
+            bullet["life"] -= dt
+            if (bullet["life"] <= 0 or bullet["x"] < -10 or bullet["x"] > WIDTH + 10
+                    or bullet["y"] < 60 or bullet["y"] > HEIGHT + 10):
+                self.enemy_bullets.remove(bullet)
+                continue
+            if distance(player.x, player.y, bullet["x"], bullet["y"]) < 18 + bullet["radius"]:
+                player.take_damage(bullet["damage"])
+                self.enemy_bullets.remove(bullet)
+                self.shake = max(self.shake, 0.10)
+                self.add_burst(player.x, player.y, PINK, 7)
 
         # Push enemies apart when they touch.
         self.resolve_enemy_collisions()
@@ -938,6 +1819,10 @@ class ArenaGame:
 
         # Pickups.
         for item in self.pickups[:]:
+            if item.ttl is not None:
+                item.ttl -= dt
+                if item.ttl <= 0:
+                    item.active = False
             if (
                     item.active
                     and distance(
@@ -987,6 +1872,22 @@ class ArenaGame:
                 and self.level.spawned > 0
         ):
             self.level.begin_next_wave()
+            unlocked_name = player.unlock_weapons_for_wave(self.level.wave)
+            if unlocked_name and self.level.wave == MINE_UNLOCK_WAVE:
+                self.set_message(
+                    f"NEW WEAPON: {unlocked_name}  |  MINES UNLOCKED (E)"
+                )
+            elif unlocked_name:
+                self.set_message(f"NEW WEAPON UNLOCKED: {unlocked_name}")
+            elif self.level.wave == MINE_UNLOCK_WAVE:
+                self.set_message("MINES UNLOCKED! PRESS E TO DEPLOY")
+
+            # Wave 100 conquered: grant absolute power for all later waves.
+            if (
+                    self.level.wave >= ABSOLUTE_POWER_WAVE
+                    and not player.absolute_power
+            ):
+                self.activate_absolute_power()
 
         self.shake = max(0, self.shake - dt)
 
@@ -1050,8 +1951,9 @@ class ArenaGame:
 
         c.create_text(
             250, 18,
-            text=f"WAVE  {self.level.wave:02}",
-            fill=WHITE,
+            text=(f"BOSS WAVE  {self.level.wave:02}" if self.level.wave % 10 == 0
+                  else f"WAVE  {self.level.wave:02}"),
+            fill=GOLD if self.level.wave % 10 == 0 else WHITE,
             font=("Segoe UI", 10, "bold")
         )
 
@@ -1098,6 +2000,15 @@ class ArenaGame:
             font=("Segoe UI", 9, "bold")
         )
 
+        if self.player.absolute_power:
+            c.create_text(
+                625, 18,
+                text="ABSOLUTE POWER",
+                fill=GOLD,
+                anchor="w",
+                font=("Segoe UI", 8, "bold")
+            )
+
         weapon = self.player.weapon
 
         c.create_text(
@@ -1108,10 +2019,18 @@ class ArenaGame:
             font=("Segoe UI", 9, "bold")
         )
 
-        ammo_text = (
-            "RELOADING"
-            if weapon.is_reloading
-            else f"{weapon.ammo:02} / {weapon.magazine_size:02}"
+        if self.player.absolute_power:
+            ammo_text = "INFINITE"
+        else:
+            ammo_text = (
+                "RELOADING"
+                if weapon.is_reloading
+                else f"{weapon.ammo:02} / {weapon.magazine_size:02}"
+            )
+
+        mine_hint = "E  MINE" if self.level.wave >= MINE_UNLOCK_WAVE else f"E  MINE ({MINE_UNLOCK_WAVE})"
+        c.create_text(
+            690, 42, text=mine_hint, fill=YELLOW, anchor="w", font=("Segoe UI", 8, "bold")
         )
 
         c.create_text(
@@ -1234,6 +2153,51 @@ class ArenaGame:
                 font=("Segoe UI", 9, "bold")
             )
 
+    def draw_warden(self, enemy):
+        """Armored knight design for the WARDEN boss."""
+
+        c = self.canvas
+        t = time.time()
+        x, y, r = enemy.x, enemy.y, enemy.radius
+        spin = t * (0.9 + 0.5 * (enemy.phase - 1))
+        aim = math.atan2(self.player.y - y, self.player.x - x)
+
+        # Orbiting armor plates.
+        for k in range(8):
+            a = spin + math.tau * k / 8
+            cx = x + math.cos(a) * (r + 7)
+            cy = y + math.sin(a) * (r + 7)
+            tx, ty = -math.sin(a), math.cos(a)
+            nx, ny = math.cos(a), math.sin(a)
+            pts = []
+            for st, sn in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                pts += [
+                    cx + tx * 9 * st + nx * 3.5 * sn,
+                    cy + ty * 9 * st + ny * 3.5 * sn,
+                ]
+            c.create_polygon(pts, fill=enemy.color, outline="#fff3c4", width=1)
+
+        # Octagonal armored body.
+        pts = []
+        for k in range(8):
+            a = math.pi / 8 + math.tau * k / 8
+            pts += [x + math.cos(a) * r, y + math.sin(a) * r]
+        c.create_polygon(pts, fill=enemy.body_fill, outline=enemy.color, width=3)
+
+        # Rotating inner hexagon.
+        pts = []
+        for k in range(6):
+            a = -spin * 1.5 + math.tau * k / 6
+            pts += [x + math.cos(a) * r * 0.55, y + math.sin(a) * r * 0.55]
+        c.create_polygon(pts, fill="", outline=enemy.color, width=2)
+
+        # Glowing visor that tracks the player (turns red when enraged).
+        eye_color = PINK if enemy.phase == 1 else "#ff3b30"
+        ex = x + math.cos(aim) * r * 0.32
+        ey = y + math.sin(aim) * r * 0.32
+        c.create_oval(ex - 8, ey - 8, ex + 8, ey + 8, fill=eye_color, outline=WHITE, width=2)
+        c.create_oval(ex - 3, ey - 3, ex + 3, ey + 3, fill=WHITE, outline="")
+
     def draw_player(self):
         c = self.canvas
         p = self.player
@@ -1274,6 +2238,15 @@ class ArenaGame:
             width=1
         )
 
+        # Golden aura while Absolute Power is active.
+        if p.absolute_power:
+            c.create_oval(
+                p.x - 32, p.y - 32,
+                p.x + 32, p.y + 32,
+                outline=GOLD,
+                width=2
+            )
+
     def draw_overlay(self):
         self.canvas.create_rectangle(
             0, 0, WIDTH, HEIGHT,
@@ -1291,6 +2264,9 @@ class ArenaGame:
             self.draw_hud()
 
             for item in self.pickups:
+                # Expiring packs blink during their last seconds.
+                if item.ttl is not None and item.ttl < 4 and int(item.ttl * 6) % 2 == 0:
+                    continue
                 color = item.color
 
                 c.create_oval(
@@ -1310,6 +2286,42 @@ class ArenaGame:
                     text=symbol,
                     fill=color,
                     font=("Segoe UI", 10, "bold")
+                )
+
+            for mine in self.mines:
+                armed = mine.armed
+                pulse = 0.5 + 0.5 * math.sin(time.time() * (10 if armed else 4))
+                color = PINK if armed else MUTED
+
+                # Pulsing danger ring once the mine is armed.
+                if armed:
+                    ring = 20 + 5 * pulse
+                    c.create_oval(
+                        mine.x - ring, mine.y - ring,
+                        mine.x + ring, mine.y + ring,
+                        outline="#7a2e4d", width=1, dash=(2, 4)
+                    )
+
+                # Spiked naval-mine body.
+                for k in range(8):
+                    a = math.pi / 8 + math.tau * k / 8
+                    x1 = mine.x + math.cos(a) * 9
+                    y1 = mine.y + math.sin(a) * 9
+                    x2 = mine.x + math.cos(a) * 15
+                    y2 = mine.y + math.sin(a) * 15
+                    c.create_line(x1, y1, x2, y2, fill=color, width=3)
+                    c.create_oval(x2 - 2, y2 - 2, x2 + 2, y2 + 2, fill=color, outline="")
+
+                c.create_oval(
+                    mine.x - 10, mine.y - 10, mine.x + 10, mine.y + 10,
+                    fill="#2a2f3d", outline=color, width=2
+                )
+
+                # Blinking core light.
+                core = 2 + 3 * pulse if armed else 3
+                c.create_oval(
+                    mine.x - core, mine.y - core, mine.x + core, mine.y + core,
+                    fill=color if armed else "#4a5368", outline=""
                 )
 
             for bullet in self.bullets:
@@ -1336,27 +2348,65 @@ class ArenaGame:
                     width=max(1, int(5 * (1 - progress))),
                 )
 
+            for bullet in self.enemy_bullets:
+                r = bullet["radius"]
+                c.create_oval(
+                    bullet["x"] - r, bullet["y"] - r,
+                    bullet["x"] + r, bullet["y"] + r,
+                    fill=bullet.get("color", "#ff9b45"), outline="#ffe0a3", width=2
+                )
+
             for enemy in self.enemies:
                 r = enemy.radius
 
-                c.create_oval(
-                    enemy.x - r,
-                    enemy.y - r,
-                    enemy.x + r,
-                    enemy.y + r,
-                    fill="#48243c",
-                    outline=PINK,
-                    width=2
-                )
+                if getattr(enemy, "is_boss", False):
+                    c.create_oval(
+                        enemy.x-r-11, enemy.y-r-11,
+                        enemy.x+r+11, enemy.y+r+11,
+                        outline=enemy.color, width=3
+                    )
+                    c.create_text(
+                        enemy.x, enemy.y-r-29,
+                        text=enemy.boss_name, fill=enemy.color,
+                        font=("Segoe UI", 10, "bold")
+                    )
+                    # Large boss health bar.
+                    bar_width = 110
+                    c.create_rectangle(
+                        enemy.x-bar_width/2, enemy.y-r-17,
+                        enemy.x+bar_width/2, enemy.y-r-10,
+                        fill="#39263b", outline=enemy.color
+                    )
+                    c.create_rectangle(
+                        enemy.x-bar_width/2, enemy.y-r-17,
+                        enemy.x-bar_width/2 + bar_width * enemy.health / enemy.max_health,
+                        enemy.y-r-10, fill="#ff5d8f", outline=""
+                    )
+                elif enemy.is_checkpoint:
+                    c.create_oval(enemy.x-r-9, enemy.y-r-9, enemy.x+r+9, enemy.y+r+9, outline=GOLD, width=3)
+                    c.create_text(enemy.x, enemy.y-r-20, text="CHECKPOINT", fill=GOLD, font=("Segoe UI", 8, "bold"))
 
-                c.create_oval(
-                    enemy.x - 5,
-                    enemy.y - 5,
-                    enemy.x + 5,
-                    enemy.y + 5,
-                    fill=PINK,
-                    outline=""
-                )
+                if getattr(enemy, "is_boss", False) and enemy.cfg["name"] == "WARDEN":
+                    self.draw_warden(enemy)
+                else:
+                    c.create_oval(
+                        enemy.x - r,
+                        enemy.y - r,
+                        enemy.x + r,
+                        enemy.y + r,
+                        fill=enemy.body_fill if getattr(enemy, "is_boss", False) else "#48243c",
+                        outline=enemy.color if getattr(enemy, "is_boss", False) else PINK,
+                        width=3 if getattr(enemy, "is_boss", False) else 2
+                    )
+
+                    c.create_oval(
+                        enemy.x - 5,
+                        enemy.y - 5,
+                        enemy.x + 5,
+                        enemy.y + 5,
+                        fill=PINK,
+                        outline=""
+                    )
 
                 # Tiny health strip.
                 c.create_rectangle(
